@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<title>Chat</title>
+<style nonce="{{NONCE}}">
+:root { --brand: #1f3a5f; --ink: #1b2430; --muted: #6b7280; --line: #e5e7eb; --bg: #fff; --soft: #f5f6f8; }
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; height: 100%; background: transparent; font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; color: var(--ink); overflow: hidden; }
+button, input, select, textarea { font: inherit; color: inherit; }
+.launcher { position: absolute; bottom: 10px; width: 60px; height: 60px; border-radius: 50%; border: 0; background: var(--brand); color: #fff; cursor: pointer; box-shadow: 0 6px 20px rgba(0,0,0,.22); display: grid; place-items: center; transition: transform .15s; }
+.launcher:hover { transform: scale(1.06); }
+.launcher svg { width: 28px; height: 28px; }
+.pos-right .launcher { right: 10px; } .pos-left .launcher { left: 10px; }
+.panel { position: absolute; inset: 0; background: var(--bg); border-radius: 16px; box-shadow: 0 10px 40px rgba(0,0,0,.25); display: none; flex-direction: column; overflow: hidden; }
+.open .panel { display: flex; } .open .launcher { display: none; }
+@media (max-width: 479px) { .panel { border-radius: 0; } }
+.head { background: var(--brand); color: #fff; padding: 14px 16px; display: flex; align-items: center; gap: 10px; }
+.avatar { width: 36px; height: 36px; border-radius: 50%; background: rgba(255,255,255,.2); display: grid; place-items: center; font-weight: 700; }
+.head strong { display: block; } .head small { opacity: .85; }
+.head .x { margin-left: auto; background: none; border: 0; color: #fff; font-size: 22px; cursor: pointer; line-height: 1; padding: 4px 8px; border-radius: 6px; }
+.head .x:hover { background: rgba(255,255,255,.15); }
+.msgs { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 8px; background: var(--soft); }
+.m { max-width: 85%; padding: 9px 13px; border-radius: 14px; white-space: pre-wrap; word-wrap: break-word; }
+.m.assistant, .m.staff { align-self: flex-start; background: #fff; border: 1px solid var(--line); border-bottom-left-radius: 4px; }
+.m.staff { border-color: var(--brand); }
+.m.visitor { align-self: flex-end; background: var(--brand); color: #fff; border-bottom-right-radius: 4px; }
+.m .who { display: block; font-size: 11px; color: var(--muted); margin-bottom: 2px; }
+.typing { color: var(--muted); font-style: italic; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 16px 10px; background: var(--soft); }
+.chip { border: 1px solid var(--brand); color: var(--brand); background: #fff; border-radius: 999px; padding: 5px 11px; cursor: pointer; font-size: 13px; }
+.chip:hover { background: var(--brand); color: #fff; }
+.composer { display: flex; gap: 8px; padding: 10px; border-top: 1px solid var(--line); background: #fff; }
+.composer input { flex: 1; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; outline: none; }
+.composer input:focus, .card input:focus, .card select:focus, .card textarea:focus { border-color: var(--brand); }
+.btn { background: var(--brand); color: #fff; border: 0; border-radius: 10px; padding: 9px 14px; cursor: pointer; font-weight: 600; }
+.btn:disabled { opacity: .5; cursor: default; }
+.btn.ghost { background: none; color: var(--muted); font-weight: 400; }
+.card { align-self: stretch; background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+.card h4 { margin: 0; font-size: 14px; }
+.card input, .card select, .card textarea { width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; outline: none; }
+.card label { font-size: 12px; color: var(--muted); display: flex; flex-direction: column; gap: 3px; }
+.card label.check { flex-direction: row; align-items: flex-start; gap: 6px; }
+.card label.check input { width: auto; margin-top: 2px; }
+.days, .slots { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; flex-wrap: wrap; }
+.day, .slot { border: 1px solid var(--line); background: #fff; border-radius: 8px; padding: 6px 9px; cursor: pointer; font-size: 12px; white-space: nowrap; }
+.day.on, .slot.on { background: var(--brand); color: #fff; border-color: var(--brand); }
+.err { color: #b91c1c; font-size: 12px; }
+.row { display: flex; gap: 8px; } .row > * { flex: 1; }
+.foot { text-align: center; font-size: 10px; color: var(--muted); padding: 4px; background: #fff; }
+.notice { padding: 24px; text-align: center; color: var(--muted); }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script nonce="{{NONCE}}">
+(function () {
+  "use strict";
+  var KEY = {{KEY}};
+  var PAGE = {{PAGE}};
+  var API = "/api/v1/public";
+  var STORE = "fd:" + KEY;
+  var root = document.getElementById("root");
+  var cfg = null, conv = null, lastId = 0, open = false, pollTimer = null, busy = false;
+
+  // ---------- helpers ----------
+  function el(tag, attrs, children) {
+    var n = document.createElement(tag);
+    if (attrs) for (var k in attrs) {
+      if (k === "text") n.textContent = attrs[k];
+      else if (k === "class") n.className = attrs[k];
+      else if (k.slice(0, 2) === "on") n.addEventListener(k.slice(2), attrs[k]);
+      else n.setAttribute(k, attrs[k]);
+    }
+    (children || []).forEach(function (c) { if (c) n.appendChild(typeof c === "string" ? document.createTextNode(c) : c); });
+    return n;
+  }
+  function load() { try { return JSON.parse(localStorage.getItem(STORE) || "null"); } catch (e) { return null; } }
+  function save(v) { try { localStorage.setItem(STORE, JSON.stringify(v)); } catch (e) { /* storage blocked */ } }
+  function api(path, opts) {
+    opts = opts || {};
+    var headers = { "Content-Type": "application/json" };
+    if (conv && conv.token) headers["X-Visitor-Token"] = conv.token;
+    return fetch(API + path, { method: opts.method || "GET", headers: headers, body: opts.body ? JSON.stringify(opts.body) : undefined, credentials: "omit" })
+      .then(function (r) {
+        return r.json().catch(function () { return {}; }).then(function (d) {
+          if (!r.ok) { var msg = typeof d.detail === "string" ? d.detail : (Array.isArray(d.detail) ? d.detail.map(function (e) { return e.msg; }).join("; ") : "Something went wrong."); throw new Error(msg); }
+          return d;
+        });
+      });
+  }
+  function tell() { parent.postMessage({ type: "fd:state", open: open, position: cfg ? cfg.position : "right" }, "*"); }
+
+  // ---------- layout ----------
+  var msgs = el("div", { class: "msgs", role: "log", "aria-live": "polite" });
+  var chips = el("div", { class: "chips" });
+  var input = el("input", { placeholder: "Type your message…", maxlength: "2000", "aria-label": "Message" });
+  var sendBtn = el("button", { class: "btn", text: "Send" });
+  var composer = el("form", { class: "composer" }, [input, sendBtn]);
+  var nameEl = el("strong"), subEl = el("small"), avatar = el("div", { class: "avatar" });
+  var panel = el("div", { class: "panel", role: "dialog", "aria-label": "Chat" }, [
+    el("div", { class: "head" }, [avatar, el("div", null, [nameEl, subEl]),
+      el("button", { class: "x", "aria-label": "Close chat", text: "×", onclick: function () { toggle(false); } })]),
+    msgs, chips, composer, el("div", { class: "foot", text: "AI assistant · may make mistakes" })
+  ]);
+  var launcher = el("button", { class: "launcher", "aria-label": "Open chat" });
+  launcher.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>';
+  launcher.addEventListener("click", function () { toggle(true); });
+  var shell = el("div", { class: "pos-right" }, [launcher, panel]);
+  root.appendChild(shell);
+
+  function scroll() { msgs.scrollTop = msgs.scrollHeight; }
+  function addMsg(m) {
+    if (m.id && m.id <= lastId) return;
+    if (m.id) lastId = m.id;
+    var who = m.role === "staff" ? (cfg.business_name + " team") : null;
+    msgs.appendChild(el("div", { class: "m " + m.role }, [who ? el("span", { class: "who", text: who }) : null, m.content]));
+    scroll();
+  }
+  function addCard(node) { msgs.appendChild(node); scroll(); return node; }
+
+  function setChips(list) {
+    chips.textContent = "";
+    list.forEach(function (c) { chips.appendChild(el("button", { class: "chip", text: c[0], onclick: c[1] })); });
+  }
+  function defaultChips() {
+    var list = [];
+    if (cfg.booking_enabled && cfg.services.length) list.push(["📅 Book an appointment", bookingCard]);
+    list.push(["🕘 Opening hours", function () { send("What are your opening hours?"); }]);
+    list.push(["💬 Talk to a person", function () { send("I'd like to talk to a person"); }]);
+    setChips(list);
+  }
+
+  // ---------- conversation ----------
+  function start() {
+    var stored = load();
+    if (stored && stored.id && stored.token) {
+      conv = stored;
+      return api("/conversations/" + conv.id + "/messages?after_id=0").then(function (d) {
+        d.messages.forEach(addMsg);
+      }).catch(function () { conv = null; save(null); return start(); });
+    }
+    return api("/" + KEY + "/conversations", { method: "POST", body: { page_url: PAGE } }).then(function (d) {
+      if (d.unavailable) { unavailable(d.message); return; }
+      conv = { id: d.conversation_id, token: d.token };
+      save(conv);
+      d.messages.forEach(addMsg);
+    });
+  }
+  function poll() {
+    if (!conv || !open) return;
+    api("/conversations/" + conv.id + "/messages?after_id=" + lastId).then(function (d) {
+      d.messages.forEach(addMsg);
+    }).catch(function () {});
+  }
+  function send(text) {
+    text = (text || "").trim();
+    if (!text || busy || !conv) return;
+    busy = true; sendBtn.disabled = true; input.value = "";
+    addMsg({ role: "visitor", content: text });
+    var t = addCard(el("div", { class: "m assistant typing", text: "Typing…" }));
+    api("/conversations/" + conv.id + "/messages", { method: "POST", body: { content: text } }).then(function (d) {
+      t.remove();
+      d.messages.forEach(function (m) { if (m.role !== "visitor") addMsg(m); else lastId = Math.max(lastId, m.id); });
+      if (d.waiting_for_human) addCard(el("div", { class: "m assistant typing", text: "A team member will reply here shortly." }));
+      if (d.action === "show_booking") bookingCard();
+      else if (d.action === "show_contact" || d.action === "handoff") contactCard();
+    }).catch(function (e) {
+      t.remove(); addCard(el("div", { class: "m assistant", text: e.message }));
+    }).then(function () { busy = false; sendBtn.disabled = false; input.focus(); });
+  }
+  composer.addEventListener("submit", function (e) { e.preventDefault(); send(input.value); });
+
+  // ---------- forms ----------
+  function field(label, attrs) { var i = el(attrs.tag || "input", attrs); return [el("label", null, [label, i]), i]; }
+  function consentField() {
+    if (!cfg.birthday_enabled) return [null, null, null];
+    var b = field("Birthday (optional — we'll send you a treat 🎁)", { type: "date" });
+    var c = el("input", { type: "checkbox" });
+    var l = el("label", { class: "check" }, [c, "Send me occasional offers and birthday wishes. Unsubscribe anytime."]);
+    return [el("div", null, [b[0], l]), b[1], c];
+  }
+
+  function contactCard() {
+    var name = field("Name", { maxlength: "120", autocomplete: "name" });
+    var email = field("Email", { type: "email", maxlength: "320", autocomplete: "email" });
+    var phone = field("Phone", { type: "tel", maxlength: "40", autocomplete: "tel" });
+    var note = field("How can we help?", { tag: "textarea", rows: "2", maxlength: "2000" });
+    var extra = consentField();
+    var err = el("div", { class: "err" });
+    var btn = el("button", { class: "btn", type: "submit", text: "Send to the team" });
+    var form = el("form", { class: "card" }, [el("h4", { text: "Leave your details" }), name[0], el("div", { class: "row" }, [email[0], phone[0]]), note[0], extra[0], err, btn]);
+    form.addEventListener("submit", function (e) {
+      e.preventDefault(); err.textContent = ""; btn.disabled = true;
+      api("/conversations/" + conv.id + "/contact", { method: "POST", body: {
+        name: name[1].value, email: email[1].value, phone: phone[1].value, message: note[1].value,
+        birthday: extra[1] && extra[1].value ? extra[1].value : null, marketing_consent: !!(extra[2] && extra[2].checked)
+      } }).then(function (d) { form.remove(); d.messages.forEach(addMsg); })
+        .catch(function (x) { err.textContent = x.message; btn.disabled = false; });
+    });
+    addCard(form); name[1].focus();
+  }
+
+  function bookingCard() {
+    if (!cfg.booking_enabled || !cfg.services.length) { contactCard(); return; }
+    var chosen = { service: cfg.services[0].id, day: null, slot: null };
+    var svc = el("select", { "aria-label": "Service" });
+    cfg.services.forEach(function (s) {
+      svc.appendChild(el("option", { value: s.id, text: s.name + " · " + s.duration_minutes + " min" + (s.price_text ? " · " + s.price_text : "") }));
+    });
+    var days = el("div", { class: "days" }), slots = el("div", { class: "slots" });
+    var err = el("div", { class: "err" });
+    var details = el("div");
+    details.hidden = true;
+    var card = el("div", { class: "card" }, [el("h4", { text: "Book an appointment" }), svc, days, slots, err]);
+
+    function renderDays() {
+      days.textContent = "";
+      var today = new Date();
+      for (var i = 0; i < 14; i++) {
+        var d = new Date(today.getFullYear(), today.getMonth(), today.getDate() + i);
+        var iso = d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+        (function (iso, d) {
+          var b = el("button", { class: "day" + (chosen.day === iso ? " on" : ""), type: "button",
+            text: i === 0 ? "Today" : d.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" }) });
+          b.addEventListener("click", function () { chosen.day = iso; chosen.slot = null; renderDays(); loadSlots(); });
+          days.appendChild(b);
+        })(iso, d);
+      }
+    }
+    function loadSlots() {
+      slots.textContent = "Loading times…"; details.hidden = true; err.textContent = "";
+      var q = "/" + KEY + "/slots?service_id=" + encodeURIComponent(chosen.service) + (chosen.day ? "&day=" + chosen.day : "");
+      api(q).then(function (d) {
+        slots.textContent = "";
+        if (!d.slots.length) { slots.textContent = chosen.day ? "No free times that day — try another." : "No free times soon. Leave your details and we'll find one."; return; }
+        d.slots.forEach(function (s) {
+          var label = chosen.day ? s.label.split(", ").pop() : s.label;
+          var b = el("button", { class: "slot", type: "button", text: label });
+          b.addEventListener("click", function () {
+            chosen.slot = s.start;
+            Array.prototype.forEach.call(slots.children, function (c) { c.classList.remove("on"); });
+            b.classList.add("on"); details.hidden = false; summary.textContent = "📅 " + s.label + " (" + d.timezone + ")";
+            nm[1].focus();
+          });
+          slots.appendChild(b);
+        });
+      }).catch(function (x) { slots.textContent = ""; err.textContent = x.message; });
+    }
+    svc.addEventListener("change", function () { chosen.service = svc.value; chosen.slot = null; loadSlots(); });
+
+    var summary = el("strong");
+    var nm = field("Name", { maxlength: "120", autocomplete: "name", required: "" });
+    var em = field("Email", { type: "email", maxlength: "320", autocomplete: "email", required: "" });
+    var ph = field("Phone" + (cfg.require_phone ? "" : " (optional)"), { type: "tel", maxlength: "40", autocomplete: "tel" });
+    if (cfg.require_phone) ph[1].setAttribute("required", "");
+    var notes = field("Notes (optional)", { tag: "textarea", rows: "2", maxlength: "1000" });
+    var extra = consentField();
+    var ferr = el("div", { class: "err" });
+    var btn = el("button", { class: "btn", type: "submit", text: "Confirm booking" });
+    var form = el("form", null, [summary, nm[0], el("div", { class: "row" }, [em[0], ph[0]]), notes[0], extra[0], ferr, btn]);
+    form.className = "card"; details.appendChild(form);
+    form.addEventListener("submit", function (e) {
+      e.preventDefault(); ferr.textContent = ""; btn.disabled = true;
+      api("/conversations/" + conv.id + "/book", { method: "POST", body: {
+        service_id: chosen.service, start: chosen.slot, name: nm[1].value, email: em[1].value, phone: ph[1].value,
+        notes: notes[1].value, birthday: extra[1] && extra[1].value ? extra[1].value : null,
+        marketing_consent: !!(extra[2] && extra[2].checked)
+      } }).then(function (d) { card.remove(); details.remove(); d.messages.forEach(addMsg); })
+        .catch(function (x) { ferr.textContent = x.message; btn.disabled = false; loadSlots(); });
+    });
+    addCard(card); addCard(details); renderDays(); loadSlots();
+  }
+
+  function unavailable(text) {
+    msgs.textContent = ""; chips.textContent = ""; composer.hidden = true;
+    msgs.appendChild(el("div", { class: "notice", text: text || "Chat is unavailable right now." }));
+  }
+
+  // ---------- open / close ----------
+  function toggle(v) {
+    open = v;
+    shell.classList.toggle("open", v);
+    tell();
+    if (v) {
+      if (!conv && cfg.available) start().then(scroll).catch(function (e) { unavailable(e.message); });
+      clearInterval(pollTimer); pollTimer = setInterval(poll, 5000);
+      setTimeout(function () { input.focus(); }, 50);
+    } else clearInterval(pollTimer);
+  }
+  document.addEventListener("keydown", function (e) { if (e.key === "Escape" && open) toggle(false); });
+
+  // ---------- boot ----------
+  api("/" + KEY + "/config").then(function (c) {
+    cfg = c;
+    document.documentElement.style.setProperty("--brand", c.brand_color);
+    shell.className = "pos-" + c.position;
+    nameEl.textContent = c.assistant_name; subEl.textContent = c.business_name;
+    avatar.textContent = (c.assistant_name || "A").charAt(0).toUpperCase();
+    document.title = "Chat with " + c.business_name;
+    if (!c.available) unavailable(c.unavailable_message); else defaultChips();
+    tell();
+  }).catch(function () { root.textContent = ""; });
+})();
+</script>
+</body>
+</html>
